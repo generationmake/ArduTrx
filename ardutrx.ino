@@ -6,7 +6,15 @@
  *                            - set PD, H/L and PTT to definded levels
  *                            - added 1750 Hz tone
  *                            - added rx/tx split from 145.600 to 145.800
+ * Version 0.3   - 25.03.2018 - corrected 1750 Hz tone: now it stops after releasing the select button
+ *                            - added boot up message with version
+ *                            - added callsign
+ *                            - updated menu and selection of options
+ *                            - added software switch to change power level
+ *                            - display rx/squelch in display (* at last position)
  */
+
+#define MY_CALLSIGN "ArduTrx"            // callsign here will display on line 1 
 
 #include <LiquidCrystal.h>
 
@@ -28,8 +36,10 @@ int encoder0PinA = 18;
 int encoder0PinB = 17;
 int encoder0PinSW = 19;
 int encoder0Pos = 0;
-int update=1;
-int sel=0;
+
+//variables for transceiver
+int update=1; // update of frequency and suelch necessary
+int sel=0;  // pointer for menu
 int vol=5;
 int sql=5;
 
@@ -85,25 +95,49 @@ void send_dravol(int vol)
   Serial.print("AT+DMOSETVOLUME=");         // begin message
   Serial.println(vol);
 }
+//set cursor to the right menu point
+void setcursor(int sel)
+{
+  if(sel==2) lcd.setCursor(10,1);       // power level
+  else if(sel==1) lcd.setCursor(7,1);   // squelch
+  else lcd.setCursor(3,1);              // volume
+}
 
 void setup()
 {
-  Serial.begin(9600); 
-  lcd.begin(16, 2);  // start display library
-  lcd.setCursor(0,0);
-  lcd.print("DRA818"); // print menu
-  lcd.setCursor(0,1);
-  lcd.print(">VOL   SQ ");
- 
-  pinMode(11,OUTPUT);
-  pinMode(12,OUTPUT);
-  pinMode(13,OUTPUT);
-  digitalWrite(11,LOW);
-  digitalWrite(12,LOW);
-  digitalWrite(13,LOW);
+// set pins
+  pinMode(2,INPUT_PULLUP); // SQ
+  pinMode(11,OUTPUT); // PTT low=rx, high=tx
+  pinMode(12,OUTPUT); // PD low=sleep, high=normal
+  pinMode(13,OUTPUT); // H_L low=1 W, high=0.5 W
+  digitalWrite(11,LOW); // rx
+  digitalWrite(12,LOW); // normal
+  digitalWrite(13,HIGH); // 0.5 W
   pinMode (encoder0PinA,INPUT);  // set encoder pins to interrupt
   pinMode (encoder0PinB,INPUT);
+
+// init display
+  Serial.begin(9600); // start serial for communication with dra818
+  lcd.begin(16, 2);  // start display library
+  lcd.setCursor(0,0);
+  lcd.print("  ArduTrx - 0.3 "); // print boot message 1
+  lcd.setCursor(0,1);
+  lcd.print("   25.03.2018   ");  // print boot message 2
+  delay(2000);    // wait 2 seconds
+  lcd.clear();  // clear display
+  lcd.setCursor(0,0);
+  lcd.print(MY_CALLSIGN); // print my callsign
+  lcd.setCursor(0,1);
+  lcd.print("VOL  SQ  PL"); // print menu in second line
+  lcd.setCursor(7,1);
+  lcd.print(sql);    // display squelch
+  lcd.setCursor(3,1);
+  lcd.print(vol);    // display volume
+  setcursor(sel);   // position cursor for menu
+  lcd.blink();    // enable blink funktion of cursor
+
   encoder0Pos=11600;  // initial value for frequency
+//enable interrupts
   pciSetup(A3);  // enable pin change interrupt for encoder
   pciSetup(A4);
 }
@@ -114,74 +148,93 @@ void loop()
   char ftxbuffer[10];  // buffer for tx frequency string
   int freqtx,freqrx;
   int freqa,freqb;
-  int updatevol=0;
+  int updatevol=0;  // set to 1 when update of volume necessary
+  int sqin;   // variable for squelch input
+  static int sqin_old=0;  // variable for squelch input to store old value
 
-  lcd.setCursor(0,1);            // move to the begining of the second line
+  sqin=digitalRead(2);    // read squelch input
+  if(sqin!=sqin_old)    // compare if squelch has changed
+  {
+    sqin_old=sqin;      // store new value of squelch
+    lcd.setCursor(15,1);    // go to last position of display
+    if(sqin) lcd.print(" ");  // print blank if no rx
+    else lcd.print("*");      // print * if rx
+    setcursor(sel);         // set cursor to menu position
+  }
   lcd_key = read_LCD_buttons();  // read the buttons
 
 // menu
   switch (lcd_key)               // depending on which button was pushed, we perform an action
   {
-    case btnRIGHT:               // set squelch
+    case btnRIGHT:               // go to next position
       {
-        sel=1;
-        lcd.print(" VOL  >SQ ");
+        sel++;
+        sel=sel%3;        // our menu has 3 points
+        setcursor(sel);
         delay(200);
         break;
       }
-    case btnLEFT:                // set volume
+    case btnLEFT:                // go to previous position
       {
-        noTone(3);
-        sel=0;
-        lcd.print(">VOL   SQ ");
+        sel+=2;
+        sel=sel%3;        // our menu has 3 points
+        setcursor(sel);
         delay(200);
         break;
       }
-    case btnUP:
+    case btnUP:       // button up
       {
-        if(sel==0)
+        if(sel==0)    // volume
         {
           if(vol<8)vol++;
           updatevol=1;
         }
-        if(sel==1)
+        if(sel==1)    // squelch
         {
           if(sql<8)sql++;
           update=1;
         }
+        if(sel==2)    // power level
+        {
+          digitalWrite(13,LOW); // 1 W
+          lcd.print("H");
+          lcd.setCursor(10,1);  
+        }
         delay(200);
         break;
       }
-    case btnDOWN:
+    case btnDOWN:   // button down
       {
-        if(sel==0)
+        if(sel==0)    // volume
         {
           if(vol>1)vol--;
           updatevol=1;
         }
-        if(sel==1)
+        if(sel==1)    // squelch
         {
           if(sql>0)sql--;
           update=1;
         }
+        if(sel==2)    // power level
+        {
+          digitalWrite(13,HIGH); // 0.5 W
+          lcd.print("L");
+          lcd.setCursor(10,1);  
+        }
         delay(200);
         break;
       }
-    case btnSELECT:
+    case btnSELECT:   // select button
       {
-        tone(3,1750);
-        break;  // no action for select
+        tone(3,1750);   // enable 1750 Hz tone
+        break;
       }
     case btnNONE:
       {
+        noTone(3);    // disable 1750 Hz tone again
         break;
       }
   }
-
-  lcd.setCursor(9,1);
-  lcd.print(sql);    // display squelch
-  lcd.setCursor(4,1);
-  lcd.print(vol);    // display volume
 
   if(update==1)    // update frequency or squelch
   {
@@ -194,12 +247,12 @@ void loop()
     lcd.setCursor(7,0);
     if((freqrx>=11648)&&(freqrx<=11664))   // Relais 145.6000 - 145.8000 MHz
     {
-      freqtx=freqrx-48;
-      lcd.print("-");
+      freqtx=freqrx-48;   // set tx frequency 600 kHz lower
+      lcd.print("-");     // display -
     }
     else 
     {
-      freqtx=freqrx;
+      freqtx=freqrx;    // set tx frequency = rx frequency
       lcd.print(" ");
     }
 
@@ -211,12 +264,18 @@ void loop()
     sprintf(ftxbuffer,"%03i.%04i",freqa,freqb);  // generate frequency string
     lcd.setCursor(8,0);
     lcd.print(frxbuffer);      // display frequency
-    send_dra(frxbuffer,ftxbuffer,sql);
+    send_dra(frxbuffer,ftxbuffer,sql);    // update volume on dra818
+    lcd.setCursor(7,1);
+    lcd.print(sql);    // display squelch
+    setcursor(sel);     // display menu
   }
   if(updatevol==1)    // update volume
   {
     updatevol=0;
-    send_dravol(vol);
+    send_dravol(vol);  // update volume on dra818
+    lcd.setCursor(3,1);
+    lcd.print(vol);    // display volume
+    setcursor(sel);   // display menu
   }
 }
 
