@@ -12,11 +12,27 @@
  *                            - updated menu and selection of options
  *                            - added software switch to change power level
  *                            - display rx/squelch in display (* at last position)
+ * Version 0.4   - 27.03.2018 - added power level switch - by mathias.metzner@freenet.de
+ *                            - added defines for input and output pins
  */
 
 #define MY_CALLSIGN "ArduTrx"            // callsign here will display on line 1 
 
 #include <LiquidCrystal.h>
+
+int press = 0;
+int Merker = 0;
+
+// define inputs and outputs
+#define IN_SQ   2
+#define OUT_MIC 3
+#define OUT_PTT 11
+#define OUT_PD  12
+#define OUT_H_L 13
+// define encoder pins
+#define IN_encoder0PinA  18
+#define IN_encoder0PinB  17
+#define IN_encoder0PinSW 19
 
 // select the pins used on the LCD panel
 LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
@@ -31,10 +47,6 @@ int adc_key_in  = 0;
 #define btnSELECT 4
 #define btnNONE   5
 
-// define encoder pins
-int encoder0PinA = 18;
-int encoder0PinB = 17;
-int encoder0PinSW = 19;
 int encoder0Pos = 0;
 
 //variables for transceiver
@@ -84,7 +96,8 @@ void send_dra(char *frxbuffer, char *ftxbuffer, int squ)
   Serial.print(ftxbuffer);
   Serial.print(",");
   Serial.print(frxbuffer);
-  Serial.print(",0000,");
+  Serial.print(",0010,");    // CTCSS-Tone 94.8Hz
+//  Serial.print(",0000,");
   Serial.print(squ);
   Serial.println(",0000");
 }
@@ -106,29 +119,30 @@ void setcursor(int sel)
 void setup()
 {
 // set pins
-  pinMode(2,INPUT_PULLUP); // SQ
-  pinMode(11,OUTPUT); // PTT low=rx, high=tx
-  pinMode(12,OUTPUT); // PD low=sleep, high=normal
-  pinMode(13,OUTPUT); // H_L low=1 W, high=0.5 W
-  digitalWrite(11,LOW); // rx
-  digitalWrite(12,LOW); // normal
-  digitalWrite(13,HIGH); // 0.5 W
-  pinMode (encoder0PinA,INPUT);  // set encoder pins to interrupt
-  pinMode (encoder0PinB,INPUT);
+  pinMode(IN_SQ,INPUT_PULLUP); // SQ
+  pinMode(OUT_PTT,OUTPUT); // PTT low=rx, high=tx
+  pinMode(OUT_PD,OUTPUT); // PD low=sleep, high=normal
+  pinMode(OUT_H_L,OUTPUT); // H_L low=1 W, high=0.5 W
+  digitalWrite(OUT_PTT,LOW); // rx
+  digitalWrite(OUT_PD,LOW); // normal
+  digitalWrite(OUT_H_L,HIGH); // 0.5 W
+  pinMode (IN_encoder0PinA,INPUT);  // set encoder pins to interrupt
+  pinMode (IN_encoder0PinB,INPUT);
+  pinMode (IN_encoder0PinSW,INPUT);
 
 // init display
   Serial.begin(9600); // start serial for communication with dra818
   lcd.begin(16, 2);  // start display library
   lcd.setCursor(0,0);
-  lcd.print("  ArduTrx - 0.3 "); // print boot message 1
+  lcd.print("  ArduTrx - 0.4 "); // print boot message 1
   lcd.setCursor(0,1);
-  lcd.print("   25.03.2018   ");  // print boot message 2
+  lcd.print("   27.03.2018   ");  // print boot message 2
   delay(2000);    // wait 2 seconds
   lcd.clear();  // clear display
   lcd.setCursor(0,0);
   lcd.print(MY_CALLSIGN); // print my callsign
   lcd.setCursor(0,1);
-  lcd.print("VOL  SQ  PL"); // print menu in second line
+  lcd.print("VOL  SQ  Lo"); // print menu in second line
   lcd.setCursor(7,1);
   lcd.print(sql);    // display squelch
   lcd.setCursor(3,1);
@@ -136,7 +150,8 @@ void setup()
   setcursor(sel);   // position cursor for menu
   lcd.blink();    // enable blink funktion of cursor
 
-  encoder0Pos=11600;  // initial value for frequency
+  encoder0Pos=11654;  // initial value for frequency 145.675MHz
+//  encoder0Pos=11600;  // initial value for frequency
 //enable interrupts
   pciSetup(A3);  // enable pin change interrupt for encoder
   pciSetup(A4);
@@ -152,7 +167,8 @@ void loop()
   int sqin;   // variable for squelch input
   static int sqin_old=0;  // variable for squelch input to store old value
 
-  sqin=digitalRead(2);    // read squelch input
+// squelch
+  sqin=digitalRead(IN_SQ);    // read squelch input
   if(sqin!=sqin_old)    // compare if squelch has changed
   {
     sqin_old=sqin;      // store new value of squelch
@@ -161,6 +177,38 @@ void loop()
     else lcd.print("*");      // print * if rx
     setcursor(sel);         // set cursor to menu position
   }
+
+//encoder push button
+  press = digitalRead(IN_encoder0PinSW);
+  if((press == 1) && (Merker == 0))
+  {
+    digitalWrite(OUT_H_L, HIGH);
+    Merker = 1;
+    lcd.setCursor(9,1);
+    lcd.print("Lo");
+    setcursor(sel);         // set cursor to menu position
+    delay(10);   
+  }
+  if((press == 0) && (Merker == 1))
+  {
+    Merker = 2;
+    delay(10);
+  }
+  if((press == 1) && (Merker == 2))
+  {
+    digitalWrite(OUT_H_L, LOW);
+    Merker = 3;
+    lcd.setCursor(9,1);
+    lcd.print("Hi");
+    setcursor(sel);         // set cursor to menu position
+    delay(10);
+  }
+  if((press == 0) && (Merker == 3))
+  {
+    Merker= 0;
+    delay (10);
+  }
+
   lcd_key = read_LCD_buttons();  // read the buttons
 
 // menu
@@ -196,8 +244,9 @@ void loop()
         }
         if(sel==2)    // power level
         {
-          digitalWrite(13,LOW); // 1 W
-          lcd.print("H");
+          digitalWrite(OUT_H_L,LOW); // 1 W
+          lcd.setCursor(9,1);  
+          lcd.print("Hi");
           lcd.setCursor(10,1);  
         }
         delay(200);
@@ -217,8 +266,9 @@ void loop()
         }
         if(sel==2)    // power level
         {
-          digitalWrite(13,HIGH); // 0.5 W
-          lcd.print("L");
+          digitalWrite(OUT_H_L,HIGH); // 0.5 W
+          lcd.setCursor(9,1);  
+          lcd.print("Lo");
           lcd.setCursor(10,1);  
         }
         delay(200);
@@ -226,12 +276,14 @@ void loop()
       }
     case btnSELECT:   // select button
       {
-        tone(3,1750);   // enable 1750 Hz tone
+        digitalWrite(OUT_PTT, HIGH);  // enable PTT
+        tone(OUT_MIC,1750);   // enable 1750 Hz tone
         break;
       }
     case btnNONE:
       {
-        noTone(3);    // disable 1750 Hz tone again
+        noTone(OUT_MIC);    // disable 1750 Hz tone again
+        digitalWrite(OUT_PTT, LOW);  // disable PTT
         break;
       }
   }
@@ -286,8 +338,8 @@ ISR (PCINT1_vect) // handle pin change interrupt for A0 to A5 here
   int na = LOW;
   int nb = LOW;
 
-  na = digitalRead(encoder0PinA);
-  nb = digitalRead(encoder0PinB);
+  na = digitalRead(IN_encoder0PinA);
+  nb = digitalRead(IN_encoder0PinB);
   if(encoder0PinBLast!=nb)
   {
     if(nb==HIGH)
