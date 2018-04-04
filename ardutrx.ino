@@ -16,6 +16,8 @@
  *                            - added defines for input and output pins
  * Version 0.5   - 04.04.2018 - added functions to store data in eeprom
  *                            - simplified encoder switch functions
+ *                            - pullups on encoder inputs
+ *                            - restore factory settings when encoder pressed during start up
  */
 
 #define MY_CALLSIGN "ArduTrx"            // callsign here will display on line 1 
@@ -180,8 +182,7 @@ void setup()
 // check version number of eeprom content and reset if old
   byte old_version;
   EEPROM.get(0, old_version); // previous sketch version
-//  if (!digitalRead(CAL_BUTTON) || !digitalRead(FBUTTON) || (old_version != u.raduino_version)) {
-  if (old_version != u.ardutrx_version) {
+  if (!digitalRead(IN_encoder0PinSW) || (old_version != u.ardutrx_version)) {
     lcd.setCursor(0,1);
     lcd.print("setting defaults");  // print boot message 2
     delay(2000);    // wait 2 seconds
