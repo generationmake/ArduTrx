@@ -163,9 +163,9 @@ void setup()
   digitalWrite(OUT_PTT,LOW); // rx
   digitalWrite(OUT_PD,LOW); // normal
   digitalWrite(OUT_H_L,HIGH); // 0.5 W
-  pinMode (IN_encoder0PinA,INPUT);  // set encoder pins to interrupt
-  pinMode (IN_encoder0PinB,INPUT);
-  pinMode (IN_encoder0PinSW,INPUT);
+  pinMode (IN_encoder0PinA,INPUT_PULLUP);  // encoder input pins with pullup to avoid problems when encoder no correctly connected
+  pinMode (IN_encoder0PinB,INPUT_PULLUP);
+  pinMode (IN_encoder0PinSW,INPUT_PULLUP);
 
 // init serial
   Serial.begin(9600); // start serial for communication with dra818
@@ -237,7 +237,7 @@ void loop()
 
 //encoder push button
   press = digitalRead(IN_encoder0PinSW);
-  if((press == 1) && (Merker == 0))
+  if((press == 0) && (Merker == 0))
   {
     if(u.power_level==0) u.power_level=1;    // output = 1W
     else u.power_level=0;    // output = 0.5W
@@ -248,7 +248,7 @@ void loop()
     display_cursor(sel);         // set cursor to menu position
     delay(10);   
   }
-  if((press == 0) && (Merker == 1))
+  if((press == 1) && (Merker == 1))
   {
     Merker = 0;
     delay(10);
@@ -382,8 +382,8 @@ void loop()
 
 ISR (PCINT1_vect) // handle pin change interrupt for A0 to A5 here
 {
-  static int encoder0PinALast = LOW;
-  static int encoder0PinBLast = LOW;
+  static int encoder0PinALast = HIGH;
+  static int encoder0PinBLast = HIGH;
   int na = LOW;
   int nb = LOW;
 
