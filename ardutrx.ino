@@ -12,9 +12,10 @@
  *                            - updated menu and selection of options
  *                            - added software switch to change power level
  *                            - display rx/squelch in display (* at last position)
- * Version 0.4   - 27.03.2018 - added power level switch - by mathias.metzner@freenet.de
+ * Version 0.4   - 27.03.2018 - added power level switch - by Mathias Metzner DH7AHO
  *                            - added defines for input and output pins
  * Version 0.5   - 04.04.2018 - added functions to store data in eeprom
+ *                            - simplified encoder switch functions
  */
 
 #define MY_CALLSIGN "ArduTrx"            // callsign here will display on line 1 
@@ -238,7 +239,8 @@ void loop()
   press = digitalRead(IN_encoder0PinSW);
   if((press == 1) && (Merker == 0))
   {
-    u.power_level=1;    // output = 1W
+    if(u.power_level==0) u.power_level=1;    // output = 1W
+    else u.power_level=0;    // output = 0.5W
     last_settings_update=millis();  // trigger update
     set_power_level(u.power_level); // send it to dra818
     Merker = 1;
@@ -248,23 +250,8 @@ void loop()
   }
   if((press == 0) && (Merker == 1))
   {
-    Merker = 2;
+    Merker = 0;
     delay(10);
-  }
-  if((press == 1) && (Merker == 2))
-  {
-    u.power_level=0;    // output = 0.5W
-    last_settings_update=millis();  // trigger update
-    set_power_level(u.power_level); // send it to dra818
-    Merker = 3;
-    display_power_level(u.power_level);  // display power level
-    display_cursor(sel);         // set cursor to menu position
-    delay(10);
-  }
-  if((press == 0) && (Merker == 3))
-  {
-    Merker= 0;
-    delay (10);
   }
 
   lcd_key = read_LCD_buttons();  // read the buttons
