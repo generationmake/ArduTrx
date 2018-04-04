@@ -14,6 +14,7 @@
  *                            - display rx/squelch in display (* at last position)
  * Version 0.4   - 27.03.2018 - added power level switch - by mathias.metzner@freenet.de
  *                            - added defines for input and output pins
+ * Version 0.5   - 04.04.2018 - added functions to store data in eeprom
  */
 
 #define MY_CALLSIGN "ArduTrx"            // callsign here will display on line 1 
@@ -47,13 +48,25 @@ int adc_key_in  = 0;
 #define btnSELECT 4
 #define btnNONE   5
 
-int encoder0Pos = 0;
+//user parameters, will be stored in eeprom
+struct userparameters
+{
+  byte ardutrx_version;     // version identifier
+  int encoder0Pos = 11654;      // start frequency 145.675MHz
+  byte vol=5;                // volume level
+  byte sql=5;                // squelch level
+  byte power_level=0;       // power level
+  byte ctcss=10;            // ctcss 67, 71.9, 74.4, 77, 79.7, 82.5, 85.4, 88.5, 91.5,  94.8, 97.4, 100, 103.5, 107.2, 110.9, 114.8, 118.8, 123,   127.3, 131.8, 136.5, 141.3, 146.2, 151.4, 156.7, 162.2, 167.9,  173.8, 179.9, 186.2, 192.8, 203.5, 210.7, 218.1, 225.7, 233.6,241.8, 250.3
+};
+
+struct userparameters u;
+
+#include <EEPROM.h>   // eeprom library for settings
 
 //variables for transceiver
 int update=1; // update of frequency and suelch necessary
 int sel=0;  // pointer for menu
-int vol=5;
-int sql=5;
+unsigned long last_settings_update;   // variable to store when setting were changed last.
 
 // read the buttons
 int read_LCD_buttons()
@@ -90,14 +103,16 @@ void pciSetup(byte pin)
 }
 
 //set frequency and squelch of dra818 
-void send_dra(char *frxbuffer, char *ftxbuffer, int squ)
+void send_dra(char *frxbuffer, char *ftxbuffer, int squ, byte ctcss)
 {
   Serial.print("AT+DMOSETGROUP=0,");         // begin message
   Serial.print(ftxbuffer);
   Serial.print(",");
   Serial.print(frxbuffer);
-  Serial.print(",0010,");    // CTCSS-Tone 94.8Hz
-//  Serial.print(",0000,");
+  Serial.print(",00");
+  if(ctcss<10) Serial.print("0");   // arduino generates no leading zeros
+  Serial.print(ctcss);            // print ctcss
+  Serial.print(",");    
   Serial.print(squ);
   Serial.println(",0000");
 }
@@ -108,16 +123,37 @@ void send_dravol(int vol)
   Serial.print("AT+DMOSETVOLUME=");         // begin message
   Serial.println(vol);
 }
+// set output power level of dra818
+void set_power_level(byte level)
+{
+  if(level==1) digitalWrite(OUT_H_L,LOW); // 1 W
+  else digitalWrite(OUT_H_L,HIGH); // 0,5 W
+}
+
+// display and menu routines
 //set cursor to the right menu point
-void setcursor(int sel)
+void display_cursor(int sel)
 {
   if(sel==2) lcd.setCursor(10,1);       // power level
   else if(sel==1) lcd.setCursor(7,1);   // squelch
   else lcd.setCursor(3,1);              // volume
 }
+void display_power_level(byte level)
+{
+  lcd.setCursor(9,1);  
+  if(level==1) lcd.print("Hi");
+  else lcd.print("Lo");  
+}
+
+void factory_settings()
+{
+  EEPROM.put(0,u);  // save all user parameters to EEprom
+  delay(1000);
+}
 
 void setup()
 {
+  u.ardutrx_version=1;
 // set pins
   pinMode(IN_SQ,INPUT_PULLUP); // SQ
   pinMode(OUT_PTT,OUTPUT); // PTT low=rx, high=tx
@@ -130,28 +166,42 @@ void setup()
   pinMode (IN_encoder0PinB,INPUT);
   pinMode (IN_encoder0PinSW,INPUT);
 
-// init display
+// init serial
   Serial.begin(9600); // start serial for communication with dra818
+// init display
   lcd.begin(16, 2);  // start display library
   lcd.setCursor(0,0);
-  lcd.print("  ArduTrx - 0.4 "); // print boot message 1
+  lcd.print("  ArduTrx - 0.5 "); // print boot message 1
   lcd.setCursor(0,1);
-  lcd.print("   27.03.2018   ");  // print boot message 2
+  lcd.print("   04.04.2018   ");  // print boot message 2
   delay(2000);    // wait 2 seconds
+
+// check version number of eeprom content and reset if old
+  byte old_version;
+  EEPROM.get(0, old_version); // previous sketch version
+//  if (!digitalRead(CAL_BUTTON) || !digitalRead(FBUTTON) || (old_version != u.raduino_version)) {
+  if (old_version != u.ardutrx_version) {
+    lcd.setCursor(0,1);
+    lcd.print("setting defaults");  // print boot message 2
+    delay(2000);    // wait 2 seconds
+    factory_settings();
+  }
+
+  EEPROM.get(0,u);    // get EEprom settings
+
   lcd.clear();  // clear display
   lcd.setCursor(0,0);
   lcd.print(MY_CALLSIGN); // print my callsign
   lcd.setCursor(0,1);
   lcd.print("VOL  SQ  Lo"); // print menu in second line
   lcd.setCursor(7,1);
-  lcd.print(sql);    // display squelch
+  lcd.print(u.sql);    // display squelch
   lcd.setCursor(3,1);
-  lcd.print(vol);    // display volume
-  setcursor(sel);   // position cursor for menu
+  lcd.print(u.vol);    // display volume
+  display_power_level(u.power_level);  // display power level
+  display_cursor(sel);   // position cursor for menu
   lcd.blink();    // enable blink funktion of cursor
 
-  encoder0Pos=11654;  // initial value for frequency 145.675MHz
-//  encoder0Pos=11600;  // initial value for frequency
 //enable interrupts
   pciSetup(A3);  // enable pin change interrupt for encoder
   pciSetup(A4);
@@ -167,6 +217,12 @@ void loop()
   int sqin;   // variable for squelch input
   static int sqin_old=0;  // variable for squelch input to store old value
 
+// write settings to eeprom
+  if(millis()>(last_settings_update+5000))  // 5 sencons past with no user action
+  {
+    EEPROM.put(0,u);  // save all user parameters to EEprom  - checks if data in eeprom is the same, so no risc to destroy eeprom
+  }
+
 // squelch
   sqin=digitalRead(IN_SQ);    // read squelch input
   if(sqin!=sqin_old)    // compare if squelch has changed
@@ -175,18 +231,19 @@ void loop()
     lcd.setCursor(15,1);    // go to last position of display
     if(sqin) lcd.print(" ");  // print blank if no rx
     else lcd.print("*");      // print * if rx
-    setcursor(sel);         // set cursor to menu position
+    display_cursor(sel);         // set cursor to menu position
   }
 
 //encoder push button
   press = digitalRead(IN_encoder0PinSW);
   if((press == 1) && (Merker == 0))
   {
-    digitalWrite(OUT_H_L, HIGH);
+    u.power_level=1;    // output = 1W
+    last_settings_update=millis();  // trigger update
+    set_power_level(u.power_level); // send it to dra818
     Merker = 1;
-    lcd.setCursor(9,1);
-    lcd.print("Lo");
-    setcursor(sel);         // set cursor to menu position
+    display_power_level(u.power_level);  // display power level
+    display_cursor(sel);         // set cursor to menu position
     delay(10);   
   }
   if((press == 0) && (Merker == 1))
@@ -196,11 +253,12 @@ void loop()
   }
   if((press == 1) && (Merker == 2))
   {
-    digitalWrite(OUT_H_L, LOW);
+    u.power_level=0;    // output = 0.5W
+    last_settings_update=millis();  // trigger update
+    set_power_level(u.power_level); // send it to dra818
     Merker = 3;
-    lcd.setCursor(9,1);
-    lcd.print("Hi");
-    setcursor(sel);         // set cursor to menu position
+    display_power_level(u.power_level);  // display power level
+    display_cursor(sel);         // set cursor to menu position
     delay(10);
   }
   if((press == 0) && (Merker == 3))
@@ -218,7 +276,7 @@ void loop()
       {
         sel++;
         sel=sel%3;        // our menu has 3 points
-        setcursor(sel);
+        display_cursor(sel);
         delay(200);
         break;
       }
@@ -226,7 +284,7 @@ void loop()
       {
         sel+=2;
         sel=sel%3;        // our menu has 3 points
-        setcursor(sel);
+        display_cursor(sel);
         delay(200);
         break;
       }
@@ -234,19 +292,20 @@ void loop()
       {
         if(sel==0)    // volume
         {
-          if(vol<8)vol++;
+          if(u.vol<8)u.vol++;
           updatevol=1;
         }
         if(sel==1)    // squelch
         {
-          if(sql<8)sql++;
+          if(u.sql<8)u.sql++;
           update=1;
         }
         if(sel==2)    // power level
         {
-          digitalWrite(OUT_H_L,LOW); // 1 W
-          lcd.setCursor(9,1);  
-          lcd.print("Hi");
+          u.power_level=1;    // output = 1W
+          last_settings_update=millis();  // trigger update
+          set_power_level(u.power_level); // send it to dra818
+          display_power_level(u.power_level);  // display power level
           lcd.setCursor(10,1);  
         }
         delay(200);
@@ -256,19 +315,20 @@ void loop()
       {
         if(sel==0)    // volume
         {
-          if(vol>1)vol--;
+          if(u.vol>1)u.vol--;
           updatevol=1;
         }
         if(sel==1)    // squelch
         {
-          if(sql>0)sql--;
+          if(u.sql>0)u.sql--;
           update=1;
         }
         if(sel==2)    // power level
         {
-          digitalWrite(OUT_H_L,HIGH); // 0.5 W
-          lcd.setCursor(9,1);  
-          lcd.print("Lo");
+          u.power_level=0;    // output = 0.5W
+          last_settings_update=millis();  // trigger update
+          set_power_level(u.power_level); // send it to dra818
+          display_power_level(u.power_level);  // display power level
           lcd.setCursor(10,1);  
         }
         delay(200);
@@ -291,11 +351,12 @@ void loop()
   if(update==1)    // update frequency or squelch
   {
     update=0;
+    last_settings_update=millis();  // trigger update
     //limit encoder values
-    if(encoder0Pos>13920) encoder0Pos=13920;  // 174.0000 MHz
-    if(encoder0Pos<10720) encoder0Pos=10720;  // 134.0000 MHz
+    freqrx=u.encoder0Pos;
+    if(freqrx>13920) freqrx=13920;  // 174.0000 MHz
+    if(freqrx<10720) freqrx=10720;  // 134.0000 MHz
      
-    freqrx=encoder0Pos;
     lcd.setCursor(7,0);
     if((freqrx>=11648)&&(freqrx<=11664))   // Relais 145.6000 - 145.8000 MHz
     {
@@ -316,18 +377,19 @@ void loop()
     sprintf(ftxbuffer,"%03i.%04i",freqa,freqb);  // generate frequency string
     lcd.setCursor(8,0);
     lcd.print(frxbuffer);      // display frequency
-    send_dra(frxbuffer,ftxbuffer,sql);    // update volume on dra818
+    send_dra(frxbuffer,ftxbuffer,u.sql,u.ctcss);    // update volume on dra818
     lcd.setCursor(7,1);
-    lcd.print(sql);    // display squelch
-    setcursor(sel);     // display menu
+    lcd.print(u.sql);    // display squelch
+    display_cursor(sel);     // display menu
   }
   if(updatevol==1)    // update volume
   {
     updatevol=0;
-    send_dravol(vol);  // update volume on dra818
+    last_settings_update=millis();  // trigger update
+    send_dravol(u.vol);  // update volume on dra818
     lcd.setCursor(3,1);
-    lcd.print(vol);    // display volume
-    setcursor(sel);   // display menu
+    lcd.print(u.vol);    // display volume
+    display_cursor(sel);   // display menu
   }
 }
 
@@ -344,13 +406,13 @@ ISR (PCINT1_vect) // handle pin change interrupt for A0 to A5 here
   {
     if(nb==HIGH)
     {
-      if(na==HIGH) encoder0Pos++;
-      else encoder0Pos--;
+      if(na==HIGH) u.encoder0Pos++;
+      else u.encoder0Pos--;
     }
     else
     {
-      if(na==HIGH) encoder0Pos--;
-      else encoder0Pos++;
+      if(na==HIGH) u.encoder0Pos--;
+      else u.encoder0Pos++;
     }
     update=1;
   }
