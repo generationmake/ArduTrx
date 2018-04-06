@@ -21,6 +21,7 @@
  * Version 0.6   - 06.04.2018 - added simple menu
  *                            - menu option for factory setting
  *                            - filter can be set
+ *                            - added strings for ctcss and on/off
  */
 
 #define MY_CALLSIGN "ArduTrx"            // callsign here will display on line 1 
@@ -184,6 +185,11 @@ void display_menu(byte action)
 {
   static byte menu_pointer=0; // pointer for active menu
   static byte menu_sub=0; // submenu active
+//strings
+  const char* strings_ctcss[]={"none","67 Hz", "71.9 Hz", "74.4 Hz", "77 Hz", "79.7 Hz", "82.5 Hz", "85.4 Hz", "88.5 Hz", "91.5 Hz",  "94.8 Hz", "97.4 Hz", "100 Hz", "103.5 Hz", "107.2 Hz", "110.9 Hz", "114.8 Hz", "118.8 Hz", "123 Hz", "127.3 Hz", "131.8 Hz", "136.5 Hz", "141.3 Hz", "146.2 Hz", "151.4 Hz", "156.7 Hz", "162.2 Hz", "167.9 Hz", "173.8 Hz", "179.9 Hz", "186.2 Hz", "192.8 Hz", "203.5 Hz", "210.7 Hz", "218.1 Hz", "225.7 Hz", "233.6 Hz", "241.8 Hz", "250.3 Hz"};
+  const char* strings_onoff[]={"on","off"};
+
+
   if(action==1) // right
   {
     if(menu_sub==0) menu_pointer++;
@@ -194,7 +200,7 @@ void display_menu(byte action)
         if(u.ctcss<38)
         {
           u.ctcss++;
-          update=1;
+//          update=1; // has to be reworked because now also displays frequency
         }
       }
       if(menu_pointer==1) // filter PRE/DE-EMPH
@@ -225,7 +231,7 @@ void display_menu(byte action)
         if(u.ctcss>0)
         {
           u.ctcss--;
-          update=1;
+//          update=1; // has to be reworked because now also displays frequency
         }
       }
       if(menu_pointer==1) // filter PRE/DE-EMPH
@@ -270,18 +276,18 @@ void display_menu(byte action)
     if(menu_sub==1)
     {
       lcd.setCursor(0,1); // print menu line 2 if submenu is active
-      if(menu_pointer==0) lcd.print(u.ctcss);
-      if(menu_pointer==1) lcd.print(u.filter_pre_de_emph);
-      if(menu_pointer==2) lcd.print(u.filter_highpass);
-      if(menu_pointer==3) lcd.print(u.filter_lowpass);
+      if(menu_pointer==0) lcd.print(strings_ctcss[u.ctcss]);
+      if(menu_pointer==1) lcd.print(strings_onoff[u.filter_pre_de_emph]);
+      if(menu_pointer==2) lcd.print(strings_onoff[u.filter_highpass]);
+      if(menu_pointer==3) lcd.print(strings_onoff[u.filter_lowpass]);
       if(menu_pointer==4) lcd.print("press right");
     }
   }
-  else      // gi back to main screen
+  else      // go back to main screen
   {
     menu_pointer=0;   // reset menupointers
     menu_sub=0;
-    update=1;     // to display frequency
+    update=1;     // to display frequency and enable changes
     display_main_screen();  // show main screen
   }
 }
