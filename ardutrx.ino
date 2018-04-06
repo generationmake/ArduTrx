@@ -18,14 +18,14 @@
  *                            - simplified encoder switch functions
  *                            - pullups on encoder inputs
  *                            - restore factory settings when encoder pressed during start up
+ * Version 0.6   - 06.04.2018 - added simple menu
+ *                            - menu option for factory setting
+ *                            - filter can be set
  */
 
 #define MY_CALLSIGN "ArduTrx"            // callsign here will display on line 1 
 
 #include <LiquidCrystal.h>
-
-int press = 0;
-int Merker = 0;
 
 // define inputs and outputs
 #define IN_SQ   2
@@ -37,6 +37,8 @@ int Merker = 0;
 #define IN_encoder0PinA  18
 #define IN_encoder0PinB  17
 #define IN_encoder0PinSW 19
+// define menu
+#define MENU_LENGTH 6
 
 // select the pins used on the LCD panel
 LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
@@ -60,6 +62,9 @@ struct userparameters
   byte sql=5;                // squelch level
   byte power_level=0;       // power level
   byte ctcss=10;            // ctcss 67, 71.9, 74.4, 77, 79.7, 82.5, 85.4, 88.5, 91.5,  94.8, 97.4, 100, 103.5, 107.2, 110.9, 114.8, 118.8, 123,   127.3, 131.8, 136.5, 141.3, 146.2, 151.4, 156.7, 162.2, 167.9,  173.8, 179.9, 186.2, 192.8, 203.5, 210.7, 218.1, 225.7, 233.6,241.8, 250.3
+  byte filter_pre_de_emph=0;
+  byte filter_highpass=0;
+  byte filter_lowpass=0;
 };
 
 struct userparameters u;
@@ -68,7 +73,9 @@ struct userparameters u;
 
 //variables for transceiver
 int update=1; // update of frequency and suelch necessary
+int update_filter=1; // update of filter settings necessary
 int sel=0;  // pointer for menu
+byte menu_in=0;  // in menu?
 unsigned long last_settings_update;   // variable to store when setting were changed last.
 
 // read the buttons
@@ -126,6 +133,16 @@ void send_dravol(int vol)
   Serial.print("AT+DMOSETVOLUME=");         // begin message
   Serial.println(vol);
 }
+//set filter of dra818
+void send_drafilter(byte pre_de_emph, byte highpass, byte lowpass)
+{
+  Serial.print("AT+SETFILTER=");         // begin message
+  Serial.print(pre_de_emph);
+  Serial.print(",");
+  Serial.print(highpass);
+  Serial.print(",");
+  Serial.println(lowpass);
+}
 // set output power level of dra818
 void set_power_level(byte level)
 {
@@ -137,7 +154,8 @@ void set_power_level(byte level)
 //set cursor to the right menu point
 void display_cursor(int sel)
 {
-  if(sel==2) lcd.setCursor(10,1);       // power level
+  if(sel==3) lcd.setCursor(13,1);       // menu entry
+  else if(sel==2) lcd.setCursor(10,1);  // power level
   else if(sel==1) lcd.setCursor(7,1);   // squelch
   else lcd.setCursor(3,1);              // volume
 }
@@ -147,11 +165,140 @@ void display_power_level(byte level)
   if(level==1) lcd.print("Hi");
   else lcd.print("Lo");  
 }
+void display_main_screen(void)
+{
+  lcd.clear();  // clear display
+  lcd.setCursor(0,0);
+  lcd.print(MY_CALLSIGN); // print my callsign
+  lcd.setCursor(0,1);
+  lcd.print("VOL  SQ  Lo  M"); // print menu in second line
+  lcd.setCursor(7,1);
+  lcd.print(u.sql);    // display squelch
+  lcd.setCursor(3,1);
+  lcd.print(u.vol);    // display volume
+  display_power_level(u.power_level);  // display power level
+  display_cursor(sel);   // position cursor for menu  
+}
+//menu functions
+void display_menu(byte action)
+{
+  static byte menu_pointer=0; // pointer for active menu
+  static byte menu_sub=0; // submenu active
+  if(action==1) // right
+  {
+    if(menu_sub==0) menu_pointer++;
+    else    // submenu active
+    {
+      if(menu_pointer==0) // ctcss
+      {
+        if(u.ctcss<38)
+        {
+          u.ctcss++;
+          update=1;
+        }
+      }
+      if(menu_pointer==1) // filter PRE/DE-EMPH
+      {
+        u.filter_pre_de_emph=1;
+        update_filter=1;
+      }
+      if(menu_pointer==2) // filter highpass
+      {
+        u.filter_highpass=1;
+        update_filter=1;
+      }
+      if(menu_pointer==3) // filter lowpass
+      {
+        u.filter_lowpass=1;
+        update_filter=1;
+      }
+      if(menu_pointer==4) reset_factory_settings(); // factory settings
+    }
+  }
+  if(action==2) // left
+  {
+    if(menu_sub==0) menu_pointer+=(MENU_LENGTH-1);
+    else    // submenu active
+    {
+      if(menu_pointer==0) // ctcss
+      {
+        if(u.ctcss>0)
+        {
+          u.ctcss--;
+          update=1;
+        }
+      }
+      if(menu_pointer==1) // filter PRE/DE-EMPH
+      {
+        u.filter_pre_de_emph=0;
+        update_filter=1;
+      }
+      if(menu_pointer==2) // filter highpass
+      {
+        u.filter_highpass=0;
+        update_filter=1;
+      }
+      if(menu_pointer==3) // filter lowpass
+      {
+        u.filter_lowpass=0;
+        update_filter=1;
+      }
+      if(menu_pointer==4) reset_factory_settings(); // factory settings
+    }
+  }
+  if(action==3) // up
+  {
+    menu_sub=0;   // disable submenu
+    if(menu_pointer==5) menu_in=0;    // back to main screen
+  }
+  if(action==4) // down
+  {
+    menu_sub=1;   // enable sub menu
+    if(menu_pointer==5) menu_in=0;    // back to main screen
+  }
+  menu_pointer%=MENU_LENGTH;
+  if(menu_in==1)    // if menu is active
+  {
+    lcd.clear();
+    lcd.setCursor(0,0);
+    if(menu_pointer==0) lcd.print("CTCSS"); // print menu line 1
+    if(menu_pointer==1) lcd.print("Filt PRE/DE-EMPH"); // print menu line 1
+    if(menu_pointer==2) lcd.print("Filter Highpass"); // print menu line 1
+    if(menu_pointer==3) lcd.print("Filter Lowpass"); // print menu line 1
+    if(menu_pointer==4) lcd.print("factory settings"); // print menu line 1
+    if(menu_pointer==5) lcd.print("back to main"); // print menu line 1
+    if(menu_sub==1)
+    {
+      lcd.setCursor(0,1); // print menu line 2 if submenu is active
+      if(menu_pointer==0) lcd.print(u.ctcss);
+      if(menu_pointer==1) lcd.print(u.filter_pre_de_emph);
+      if(menu_pointer==2) lcd.print(u.filter_highpass);
+      if(menu_pointer==3) lcd.print(u.filter_lowpass);
+      if(menu_pointer==4) lcd.print("press right");
+    }
+  }
+  else      // gi back to main screen
+  {
+    menu_pointer=0;   // reset menupointers
+    menu_sub=0;
+    update=1;     // to display frequency
+    display_main_screen();  // show main screen
+  }
+}
 
 void factory_settings()
 {
   EEPROM.put(0,u);  // save all user parameters to EEprom
   delay(1000);
+}
+
+void reset_factory_settings()
+{
+  u.ardutrx_version=0;
+  EEPROM.put(0,u);  // destroy version; after reset default values will be used
+  lcd.setCursor(0,1);
+  lcd.print("press reset");
+  while(1);
 }
 
 void setup()
@@ -174,9 +321,9 @@ void setup()
 // init display
   lcd.begin(16, 2);  // start display library
   lcd.setCursor(0,0);
-  lcd.print("  ArduTrx - 0.5 "); // print boot message 1
+  lcd.print("  ArduTrx - 0.6 "); // print boot message 1
   lcd.setCursor(0,1);
-  lcd.print("   04.04.2018   ");  // print boot message 2
+  lcd.print("   06.04.2018   ");  // print boot message 2
   delay(2000);    // wait 2 seconds
 
 // check version number of eeprom content and reset if old
@@ -191,17 +338,7 @@ void setup()
 
   EEPROM.get(0,u);    // get EEprom settings
 
-  lcd.clear();  // clear display
-  lcd.setCursor(0,0);
-  lcd.print(MY_CALLSIGN); // print my callsign
-  lcd.setCursor(0,1);
-  lcd.print("VOL  SQ  Lo"); // print menu in second line
-  lcd.setCursor(7,1);
-  lcd.print(u.sql);    // display squelch
-  lcd.setCursor(3,1);
-  lcd.print(u.vol);    // display volume
-  display_power_level(u.power_level);  // display power level
-  display_cursor(sel);   // position cursor for menu
+  display_main_screen();  // show main screen
   lcd.blink();    // enable blink funktion of cursor
 
 //enable interrupts
@@ -218,6 +355,8 @@ void loop()
   int updatevol=0;  // set to 1 when update of volume necessary
   int sqin;   // variable for squelch input
   static int sqin_old=0;  // variable for squelch input to store old value
+  int press = 0;
+  int Merker = 0;
 
 // write settings to eeprom
   if(millis()>(last_settings_update+5000))  // 5 sencons past with no user action
@@ -262,70 +401,117 @@ void loop()
   {
     case btnRIGHT:               // go to next position
       {
-        sel++;
-        sel=sel%3;        // our menu has 3 points
-        display_cursor(sel);
+        if(menu_in==1)          // if in menu
+
+        {
+          display_menu(1);       // send it direct to menu function
+        }
+        else
+        {
+          sel++;
+          sel=sel%4;        // our menu has 4 points
+          display_cursor(sel);
+        }
         delay(200);
         break;
       }
     case btnLEFT:                // go to previous position
       {
-        sel+=2;
-        sel=sel%3;        // our menu has 3 points
-        display_cursor(sel);
+        if(menu_in==1)          // if in menu
+        {
+          display_menu(2);       // send it direct to menu function
+        }
+        else
+        {
+          sel+=3;
+          sel=sel%4;        // our menu has 4 points
+          display_cursor(sel);
+        }
         delay(200);
         break;
       }
     case btnUP:       // button up
       {
-        if(sel==0)    // volume
+        if(menu_in==1)          // if in menu
         {
-          if(u.vol<8)u.vol++;
-          updatevol=1;
+          display_menu(3);       // send it direct to menu function
         }
-        if(sel==1)    // squelch
+        else
         {
-          if(u.sql<8)u.sql++;
-          update=1;
-        }
-        if(sel==2)    // power level
-        {
-          u.power_level=1;    // output = 1W
-          last_settings_update=millis();  // trigger update
-          set_power_level(u.power_level); // send it to dra818
-          display_power_level(u.power_level);  // display power level
-          lcd.setCursor(10,1);  
+          if(sel==0)    // volume
+          {
+            if(u.vol<8)u.vol++;
+            updatevol=1;
+          }
+          if(sel==1)    // squelch
+          {
+            if(u.sql<8)u.sql++;
+            update=1;
+          }
+          if(sel==2)    // power level
+          {
+            u.power_level=1;    // output = 1W
+            last_settings_update=millis();  // trigger update
+            set_power_level(u.power_level); // send it to dra818
+            display_power_level(u.power_level);  // display power level
+            lcd.setCursor(10,1);  
+          }
+          if(sel==3)    // menu
+          {
+            menu_in=1;
+            display_menu(0);
+          }
         }
         delay(200);
         break;
       }
     case btnDOWN:   // button down
       {
-        if(sel==0)    // volume
+        if(menu_in==1)          // if in menu
         {
-          if(u.vol>1)u.vol--;
-          updatevol=1;
+          display_menu(4);       // send it direct to menu function
         }
-        if(sel==1)    // squelch
+        else
         {
-          if(u.sql>0)u.sql--;
-          update=1;
-        }
-        if(sel==2)    // power level
-        {
-          u.power_level=0;    // output = 0.5W
-          last_settings_update=millis();  // trigger update
-          set_power_level(u.power_level); // send it to dra818
-          display_power_level(u.power_level);  // display power level
-          lcd.setCursor(10,1);  
+          if(sel==0)    // volume
+          {
+            if(u.vol>1)u.vol--;
+            updatevol=1;
+          }
+          if(sel==1)    // squelch
+          {
+            if(u.sql>0)u.sql--;
+            update=1;
+          }
+          if(sel==2)    // power level
+          {
+            u.power_level=0;    // output = 0.5W
+            last_settings_update=millis();  // trigger update
+            set_power_level(u.power_level); // send it to dra818
+            display_power_level(u.power_level);  // display power level
+            lcd.setCursor(10,1);  
+          }
+          if(sel==3)    // menu
+          {
+            menu_in=1;
+            display_menu(0);
+          }
         }
         delay(200);
         break;
       }
     case btnSELECT:   // select button
       {
-        digitalWrite(OUT_PTT, HIGH);  // enable PTT
-        tone(OUT_MIC,1750);   // enable 1750 Hz tone
+        if(menu_in==1)          // if in menu
+        {
+          display_menu(2);       // send it direct to menu function
+          delay(200);
+        }
+        else
+        {
+          digitalWrite(OUT_PTT, HIGH);  // enable PTT
+          tone(OUT_MIC,1750);   // enable 1750 Hz tone
+        }
         break;
       }
     case btnNONE:
@@ -378,6 +564,12 @@ void loop()
     lcd.setCursor(3,1);
     lcd.print(u.vol);    // display volume
     display_cursor(sel);   // display menu
+  }
+  if(update_filter==1)    // update filter
+  {
+    update_filter=0;
+    last_settings_update=millis();  // trigger update
+    send_drafilter(u.filter_pre_de_emph,u.filter_highpass, u.filter_lowpass);  // update filter settings on dra818
   }
 }
 
