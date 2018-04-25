@@ -22,6 +22,9 @@
  *                            - menu option for factory setting
  *                            - filter can be set
  *                            - added strings for ctcss and on/off
+ * Version 0.7   - 25.04.2018 - scan frequencies
+ *                            - defines for tune and split limit
+ *                    
  */
 
 #define MY_CALLSIGN "ArduTrx"            // callsign here will display on line 1 
@@ -39,7 +42,15 @@
 #define IN_encoder0PinB  17
 #define IN_encoder0PinSW 19
 // define menu
-#define MENU_LENGTH 6
+#define MENU_LENGTH 7
+// define frequencies
+#define SCAN_LIMIT_LOWER 11520  // 144.000 MHz
+#define SCAN_LIMIT_UPPER 11680  // 146.000 MHz
+#define TUNE_LIMIT_LOWER 10720  // 134.000 MHz
+#define TUNE_LIMIT_UPPER 13920  // 174.000 MHz
+#define SPLIT_LIMIT_LOWER 11648 // 145.600 MHz
+#define SPLIT_LIMIT_UPPER 11664 // 145.800 MHz
+#define SPLIT_DIFF 48           // 0.600 MHz
 
 // select the pins used on the LCD panel
 LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
@@ -144,11 +155,68 @@ void send_drafilter(byte pre_de_emph, byte highpass, byte lowpass)
   Serial.print(",");
   Serial.println(lowpass);
 }
+//send scan command to dra818 
+byte send_dra_scan(char *frqbuffer)
+{
+  char rxbuffer[10];  // buffer for response string
+  byte rxlen=0;   // counter for received bytes
+  do
+  {
+    Serial.print("S+");         // begin message
+    Serial.println(frqbuffer);
+    rxlen=Serial.readBytesUntil('\n',rxbuffer,4);
+  } while(rxlen==0);    // send command until answer is received
+  if(rxlen==4) rxbuffer[rxlen-1]=0;  // check length of answer and remove cr character
+  rxbuffer[rxlen]=0; // remove last byte and end string
+  if(rxbuffer[0]=='S') // check if answer starts with S
+  {
+    if(rxbuffer[2]=='0') return 0;   // there is signal on this frequency
+    else if(rxbuffer[2]=='1') return 1;  // there is no signal on this frequency
+    else return -1;   // something went wrong
+  }
+  else return -1; // something went terribly wrong
+}
+
 // set output power level of dra818
 void set_power_level(byte level)
 {
   if(level==1) digitalWrite(OUT_H_L,LOW); // 1 W
   else digitalWrite(OUT_H_L,HIGH); // 0,5 W
+}
+// scan function
+byte frequency_scan(byte dir, byte scan_run)
+{
+  char frxbuffer[10];  // buffer for frequency string
+  int freqa,freqb;    // fractals of frequency
+  static byte rx=0;
+
+  if(scan_run==1) // while scan is running
+  {
+    if(dir==1) u.encoder0Pos++; // increase frequency
+    else u.encoder0Pos--;       // decrease frequency
+    if(u.encoder0Pos<SCAN_LIMIT_LOWER) u.encoder0Pos=SCAN_LIMIT_UPPER;  // check lower limit
+    if(u.encoder0Pos>SCAN_LIMIT_UPPER) u.encoder0Pos=SCAN_LIMIT_LOWER;  // check upper limit
+  }
+  freqa=(u.encoder0Pos/80);  // frequency integral part
+  freqb=(u.encoder0Pos%80)*125;  // frequency fractional part
+  sprintf(frxbuffer,"%03i.%04i",freqa,freqb);  // generate frequency string
+  lcd.print(frxbuffer); // dipslay scan frequency
+  if(scan_run==1) // check if scan is still running
+  {
+    rx=send_dra_scan(frxbuffer);  // send command to dra
+  }
+  if(rx==0) lcd.print(" stop"); // print stop if signal found
+  else lcd.print(" run");       // print run
+  delay(100);   // wait a little bit
+  return rx;    // return result
+}
+// flush serial in bufffer
+void serial_in_flush(void)
+{
+  while(Serial.available())   // check if bytes available
+  {
+    Serial.read();            // and read them all
+  }
 }
 
 // display and menu routines
@@ -185,6 +253,8 @@ void display_menu(byte action)
 {
   static byte menu_pointer=0; // pointer for active menu
   static byte menu_sub=0; // submenu active
+  static byte scan_dir=1; // scan direction up
+  static byte scan_run=0; // scan stopped
 //strings
   const char* strings_ctcss[]={"none","67 Hz", "71.9 Hz", "74.4 Hz", "77 Hz", "79.7 Hz", "82.5 Hz", "85.4 Hz", "88.5 Hz", "91.5 Hz",  "94.8 Hz", "97.4 Hz", "100 Hz", "103.5 Hz", "107.2 Hz", "110.9 Hz", "114.8 Hz", "118.8 Hz", "123 Hz", "127.3 Hz", "131.8 Hz", "136.5 Hz", "141.3 Hz", "146.2 Hz", "151.4 Hz", "156.7 Hz", "162.2 Hz", "167.9 Hz", "173.8 Hz", "179.9 Hz", "186.2 Hz", "192.8 Hz", "203.5 Hz", "210.7 Hz", "218.1 Hz", "225.7 Hz", "233.6 Hz", "241.8 Hz", "250.3 Hz"};
   const char* strings_onoff[]={"on","off"};
@@ -195,7 +265,12 @@ void display_menu(byte action)
     if(menu_sub==0) menu_pointer++;
     else    // submenu active
     {
-      if(menu_pointer==0) // ctcss
+      if(menu_pointer==0) // scan
+      {
+        scan_dir=1; //up
+        scan_run=1; // activate scan
+      }
+      if(menu_pointer==1) // ctcss
       {
         if(u.ctcss<38)
         {
@@ -203,22 +278,22 @@ void display_menu(byte action)
 //          update=1; // has to be reworked because now also displays frequency
         }
       }
-      if(menu_pointer==1) // filter PRE/DE-EMPH
+      if(menu_pointer==2) // filter PRE/DE-EMPH
       {
         u.filter_pre_de_emph=1;
         update_filter=1;
       }
-      if(menu_pointer==2) // filter highpass
+      if(menu_pointer==3) // filter highpass
       {
         u.filter_highpass=1;
         update_filter=1;
       }
-      if(menu_pointer==3) // filter lowpass
+      if(menu_pointer==4) // filter lowpass
       {
         u.filter_lowpass=1;
         update_filter=1;
       }
-      if(menu_pointer==4) reset_factory_settings(); // factory settings
+      if(menu_pointer==5) reset_factory_settings(); // factory settings
     }
   }
   if(action==2) // left
@@ -226,7 +301,12 @@ void display_menu(byte action)
     if(menu_sub==0) menu_pointer+=(MENU_LENGTH-1);
     else    // submenu active
     {
-      if(menu_pointer==0) // ctcss
+      if(menu_pointer==0) // scan
+      {
+        scan_dir=0; //down
+        scan_run=1; // activate scan
+      }
+      if(menu_pointer==1) // ctcss
       {
         if(u.ctcss>0)
         {
@@ -234,53 +314,73 @@ void display_menu(byte action)
 //          update=1; // has to be reworked because now also displays frequency
         }
       }
-      if(menu_pointer==1) // filter PRE/DE-EMPH
+      if(menu_pointer==2) // filter PRE/DE-EMPH
       {
         u.filter_pre_de_emph=0;
         update_filter=1;
       }
-      if(menu_pointer==2) // filter highpass
+      if(menu_pointer==3) // filter highpass
       {
         u.filter_highpass=0;
         update_filter=1;
       }
-      if(menu_pointer==3) // filter lowpass
+      if(menu_pointer==4) // filter lowpass
       {
         u.filter_lowpass=0;
         update_filter=1;
       }
-      if(menu_pointer==4) reset_factory_settings(); // factory settings
+      if(menu_pointer==5) reset_factory_settings(); // factory settings
     }
   }
   if(action==3) // up
   {
     menu_sub=0;   // disable submenu
-    if(menu_pointer==5) menu_in=0;    // back to main screen
+    if(menu_pointer==6) menu_in=0;    // back to main screen
   }
   if(action==4) // down
   {
     menu_sub=1;   // enable sub menu
-    if(menu_pointer==5) menu_in=0;    // back to main screen
+    if(menu_pointer==0) serial_in_flush();  // clear serial input buffer before we start scan
+    if(menu_pointer==6) menu_in=0;    // back to main screen
   }
   menu_pointer%=MENU_LENGTH;
   if(menu_in==1)    // if menu is active
   {
-    lcd.clear();
-    lcd.setCursor(0,0);
-    if(menu_pointer==0) lcd.print("CTCSS"); // print menu line 1
-    if(menu_pointer==1) lcd.print("Filt PRE/DE-EMPH"); // print menu line 1
-    if(menu_pointer==2) lcd.print("Filter Highpass"); // print menu line 1
-    if(menu_pointer==3) lcd.print("Filter Lowpass"); // print menu line 1
-    if(menu_pointer==4) lcd.print("factory settings"); // print menu line 1
-    if(menu_pointer==5) lcd.print("back to main"); // print menu line 1
-    if(menu_sub==1)
+    if(action!=0) // key was pressed
     {
-      lcd.setCursor(0,1); // print menu line 2 if submenu is active
-      if(menu_pointer==0) lcd.print(strings_ctcss[u.ctcss]);
-      if(menu_pointer==1) lcd.print(strings_onoff[u.filter_pre_de_emph]);
-      if(menu_pointer==2) lcd.print(strings_onoff[u.filter_highpass]);
-      if(menu_pointer==3) lcd.print(strings_onoff[u.filter_lowpass]);
-      if(menu_pointer==4) lcd.print("press right");
+      lcd.clear();
+      lcd.setCursor(0,0);
+      if(menu_pointer==0) lcd.print("Scan"); // print menu line 1
+      if(menu_pointer==1) lcd.print("CTCSS"); // print menu line 1
+      if(menu_pointer==2) lcd.print("Filt PRE/DE-EMPH"); // print menu line 1
+      if(menu_pointer==3) lcd.print("Filter Highpass"); // print menu line 1
+      if(menu_pointer==4) lcd.print("Filter Lowpass"); // print menu line 1
+      if(menu_pointer==5) lcd.print("factory settings"); // print menu line 1
+      if(menu_pointer==6) lcd.print("back to main"); // print menu line 1
+      if(menu_sub==1)
+      {
+        lcd.setCursor(0,1); // print menu line 2 if submenu is active
+        if(menu_pointer==0)
+        {
+          if(frequency_scan(scan_dir, scan_run)==0) scan_run=0; // stop scan if signal was found
+        }
+        if(menu_pointer==1) lcd.print(strings_ctcss[u.ctcss]);
+        if(menu_pointer==2) lcd.print(strings_onoff[u.filter_pre_de_emph]);
+        if(menu_pointer==3) lcd.print(strings_onoff[u.filter_highpass]);
+        if(menu_pointer==4) lcd.print(strings_onoff[u.filter_lowpass]);
+        if(menu_pointer==5) lcd.print("press right");
+      }
+    }
+    else  // no key was pressed
+    {
+      if(menu_sub==1)
+      {
+        lcd.setCursor(0,1); // print menu line 2 if submenu is active
+        if(menu_pointer==0)
+        {
+          if(frequency_scan(scan_dir, scan_run)==0) scan_run=0; // stop scan if signal was found
+        }
+      }      
     }
   }
   else      // go back to main screen
@@ -327,9 +427,9 @@ void setup()
 // init display
   lcd.begin(16, 2);  // start display library
   lcd.setCursor(0,0);
-  lcd.print("  ArduTrx - 0.6 "); // print boot message 1
+  lcd.print("  ArduTrx - 0.7 "); // print boot message 1
   lcd.setCursor(0,1);
-  lcd.print("   06.04.2018   ");  // print boot message 2
+  lcd.print("   25.04.2018   ");  // print boot message 2
   delay(2000);    // wait 2 seconds
 
 // check version number of eeprom content and reset if old
@@ -408,7 +508,6 @@ void loop()
     case btnRIGHT:               // go to next position
       {
         if(menu_in==1)          // if in menu
-
         {
           display_menu(1);       // send it direct to menu function
         }
@@ -465,6 +564,7 @@ void loop()
           if(sel==3)    // menu
           {
             menu_in=1;
+            serial_in_flush();  // clear serial input buffer before we start menu
             display_menu(0);
           }
         }
@@ -500,6 +600,7 @@ void loop()
           if(sel==3)    // menu
           {
             menu_in=1;
+            serial_in_flush();  // clear serial input buffer before we start menu
             display_menu(0);
           }
         }
@@ -522,6 +623,10 @@ void loop()
       }
     case btnNONE:
       {
+        if(menu_in==1)          // if in menu
+        {
+          display_menu(0);       // send it direct to menu function
+        }
         noTone(OUT_MIC);    // disable 1750 Hz tone again
         digitalWrite(OUT_PTT, LOW);  // disable PTT
         break;
@@ -534,13 +639,13 @@ void loop()
     last_settings_update=millis();  // trigger update
     //limit encoder values
     freqrx=u.encoder0Pos;
-    if(freqrx>13920) freqrx=13920;  // 174.0000 MHz
-    if(freqrx<10720) freqrx=10720;  // 134.0000 MHz
+    if(freqrx>TUNE_LIMIT_UPPER) freqrx=TUNE_LIMIT_UPPER;  // 174.0000 MHz
+    if(freqrx<TUNE_LIMIT_LOWER) freqrx=TUNE_LIMIT_LOWER;  // 134.0000 MHz
      
     lcd.setCursor(7,0);
-    if((freqrx>=11648)&&(freqrx<=11664))   // Relais 145.6000 - 145.8000 MHz
+    if((freqrx>=SPLIT_LIMIT_LOWER)&&(freqrx<=SPLIT_LIMIT_UPPER))   // split function for relais 145.6000 - 145.8000 MHz
     {
-      freqtx=freqrx-48;   // set tx frequency 600 kHz lower
+      freqtx=freqrx-SPLIT_DIFF;   // set tx frequency 600 kHz lower
       lcd.print("-");     // display -
     }
     else 
