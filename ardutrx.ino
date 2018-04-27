@@ -24,12 +24,16 @@
  *                            - added strings for ctcss and on/off
  * Version 0.7   - 25.04.2018 - scan frequencies
  *                            - defines for tune and split limit
+ * Version 0.8   - 27.04.2018 - check communication with dra818 with handshake command
+ *                            - now compatible with Arduino Leonardo
+ *                            - changed encoder from pin change interrupt to timer interrupt because Arduino Leonardo doesn't support pin change interrupt on these pins
  *                    
  */
 
 #define MY_CALLSIGN "ArduTrx"            // callsign here will display on line 1 
 
 #include <LiquidCrystal.h>
+#include <TimerOne.h>
 
 // define inputs and outputs
 #define IN_SQ   2
@@ -38,11 +42,11 @@
 #define OUT_PD  12
 #define OUT_H_L 13
 // define encoder pins
-#define IN_encoder0PinA  18
-#define IN_encoder0PinB  17
-#define IN_encoder0PinSW 19
+#define IN_encoder0PinA  A3
+#define IN_encoder0PinB  A4
+#define IN_encoder0PinSW A5
 // define menu
-#define MENU_LENGTH 7
+#define MENU_LENGTH 8
 // define frequencies
 #define SCAN_LIMIT_LOWER 11520  // 144.000 MHz
 #define SCAN_LIMIT_UPPER 11680  // 146.000 MHz
@@ -51,6 +55,14 @@
 #define SPLIT_LIMIT_LOWER 11648 // 145.600 MHz
 #define SPLIT_LIMIT_UPPER 11664 // 145.800 MHz
 #define SPLIT_DIFF 48           // 0.600 MHz
+
+//compatibility for arduino leonardo
+// leonardo uses Serial1
+#ifdef __AVR_ATmega32U4__
+  #define SerialDra Serial1
+#else // arduino uno
+  #define SerialDra Serial
+#endif
 
 // select the pins used on the LCD panel
 LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
@@ -116,44 +128,36 @@ int read_LCD_buttons()
   return btnNONE;  // when all others fail, return this...
 }
 
-// Install Pin change interrupt for a pin, can be called multiple times
-void pciSetup(byte pin)
-{
-  *digitalPinToPCMSK(pin) |= bit (digitalPinToPCMSKbit(pin));  // enable pin
-  PCIFR  |= bit (digitalPinToPCICRbit(pin)); // clear any outstanding interrupt
-  PCICR  |= bit (digitalPinToPCICRbit(pin)); // enable interrupt for the group
-}
-
 //set frequency and squelch of dra818 
 void send_dra(char *frxbuffer, char *ftxbuffer, int squ, byte ctcss)
 {
-  Serial.print("AT+DMOSETGROUP=0,");         // begin message
-  Serial.print(ftxbuffer);
-  Serial.print(",");
-  Serial.print(frxbuffer);
-  Serial.print(",00");
-  if(ctcss<10) Serial.print("0");   // arduino generates no leading zeros
-  Serial.print(ctcss);            // print ctcss
-  Serial.print(",");    
-  Serial.print(squ);
-  Serial.println(",0000");
+  SerialDra.print("AT+DMOSETGROUP=0,");         // begin message
+  SerialDra.print(ftxbuffer);
+  SerialDra.print(",");
+  SerialDra.print(frxbuffer);
+  SerialDra.print(",00");
+  if(ctcss<10) SerialDra.print("0");   // arduino generates no leading zeros
+  SerialDra.print(ctcss);            // print ctcss
+  SerialDra.print(",");    
+  SerialDra.print(squ);
+  SerialDra.println(",0000");
 }
 
 //set volume of dra818
 void send_dravol(int vol)
 {
-  Serial.print("AT+DMOSETVOLUME=");         // begin message
-  Serial.println(vol);
+  SerialDra.print("AT+DMOSETVOLUME=");         // begin message
+  SerialDra.println(vol);
 }
 //set filter of dra818
 void send_drafilter(byte pre_de_emph, byte highpass, byte lowpass)
 {
-  Serial.print("AT+SETFILTER=");         // begin message
-  Serial.print(pre_de_emph);
-  Serial.print(",");
-  Serial.print(highpass);
-  Serial.print(",");
-  Serial.println(lowpass);
+  SerialDra.print("AT+SETFILTER=");         // begin message
+  SerialDra.print(pre_de_emph);
+  SerialDra.print(",");
+  SerialDra.print(highpass);
+  SerialDra.print(",");
+  SerialDra.println(lowpass);
 }
 //send scan command to dra818 
 byte send_dra_scan(char *frqbuffer)
@@ -162,9 +166,9 @@ byte send_dra_scan(char *frqbuffer)
   byte rxlen=0;   // counter for received bytes
   do
   {
-    Serial.print("S+");         // begin message
-    Serial.println(frqbuffer);
-    rxlen=Serial.readBytesUntil('\n',rxbuffer,4);
+    SerialDra.print("S+");         // begin message
+    SerialDra.println(frqbuffer);
+    rxlen=SerialDra.readBytesUntil('\n',rxbuffer,4);
   } while(rxlen==0);    // send command until answer is received
   if(rxlen==4) rxbuffer[rxlen-1]=0;  // check length of answer and remove cr character
   rxbuffer[rxlen]=0; // remove last byte and end string
@@ -175,6 +179,22 @@ byte send_dra_scan(char *frqbuffer)
     else return -1;   // something went wrong
   }
   else return -1; // something went terribly wrong
+}
+
+//send handshake command to dra818 
+void send_dra_handshake(void)
+{
+  char rxbuffer[20];  // buffer for response string
+  byte rxlen=0;   // counter for received bytes
+  do
+  {
+    SerialDra.println("AT+DMOCONNECT");         // begin message
+    rxlen=SerialDra.readBytesUntil('\n',rxbuffer,19);
+  } while(rxlen==0);    // send command until answer is received
+  rxbuffer[rxlen-1]=0;  // check length of answer and remove cr character
+  rxbuffer[rxlen]=0; // remove last byte and end string
+  lcd.print(rxbuffer);  // print answer to display
+  delay(1000);    // wait a little bit
 }
 
 // set output power level of dra818
@@ -213,9 +233,9 @@ byte frequency_scan(byte dir, byte scan_run)
 // flush serial in bufffer
 void serial_in_flush(void)
 {
-  while(Serial.available())   // check if bytes available
+  while(SerialDra.available())   // check if bytes available
   {
-    Serial.read();            // and read them all
+    SerialDra.read();            // and read them all
   }
 }
 
@@ -335,13 +355,13 @@ void display_menu(byte action)
   if(action==3) // up
   {
     menu_sub=0;   // disable submenu
-    if(menu_pointer==6) menu_in=0;    // back to main screen
+    if(menu_pointer==7) menu_in=0;    // back to main screen
   }
   if(action==4) // down
   {
     menu_sub=1;   // enable sub menu
     if(menu_pointer==0) serial_in_flush();  // clear serial input buffer before we start scan
-    if(menu_pointer==6) menu_in=0;    // back to main screen
+    if(menu_pointer==7) menu_in=0;    // back to main screen
   }
   menu_pointer%=MENU_LENGTH;
   if(menu_in==1)    // if menu is active
@@ -356,7 +376,8 @@ void display_menu(byte action)
       if(menu_pointer==3) lcd.print("Filter Highpass"); // print menu line 1
       if(menu_pointer==4) lcd.print("Filter Lowpass"); // print menu line 1
       if(menu_pointer==5) lcd.print("factory settings"); // print menu line 1
-      if(menu_pointer==6) lcd.print("back to main"); // print menu line 1
+      if(menu_pointer==6) lcd.print("DRA818 check"); // print menu line 1
+      if(menu_pointer==7) lcd.print("back to main"); // print menu line 1
       if(menu_sub==1)
       {
         lcd.setCursor(0,1); // print menu line 2 if submenu is active
@@ -369,6 +390,7 @@ void display_menu(byte action)
         if(menu_pointer==3) lcd.print(strings_onoff[u.filter_highpass]);
         if(menu_pointer==4) lcd.print(strings_onoff[u.filter_lowpass]);
         if(menu_pointer==5) lcd.print("press right");
+        if(menu_pointer==6) send_dra_handshake();
       }
     }
     else  // no key was pressed
@@ -423,13 +445,13 @@ void setup()
   pinMode (IN_encoder0PinSW,INPUT_PULLUP);
 
 // init serial
-  Serial.begin(9600); // start serial for communication with dra818
+  SerialDra.begin(9600); // start serial for communication with dra818
 // init display
   lcd.begin(16, 2);  // start display library
   lcd.setCursor(0,0);
-  lcd.print("  ArduTrx - 0.7 "); // print boot message 1
+  lcd.print("  ArduTrx - 0.8 "); // print boot message 1
   lcd.setCursor(0,1);
-  lcd.print("   25.04.2018   ");  // print boot message 2
+  lcd.print("   27.04.2018   ");  // print boot message 2
   delay(2000);    // wait 2 seconds
 
 // check version number of eeprom content and reset if old
@@ -448,8 +470,8 @@ void setup()
   lcd.blink();    // enable blink funktion of cursor
 
 //enable interrupts
-  pciSetup(A3);  // enable pin change interrupt for encoder
-  pciSetup(A4);
+  Timer1.initialize(1000);  // activate timer with 1 ms
+  Timer1.attachInterrupt(int_timer1);
 }
  
 void loop()
@@ -462,7 +484,7 @@ void loop()
   int sqin;   // variable for squelch input
   static int sqin_old=0;  // variable for squelch input to store old value
   int press = 0;
-  int Merker = 0;
+  static int Merker = 0;    // static to save status
 
 // write settings to eeprom
   if(millis()>(last_settings_update+5000))  // 5 sencons past with no user action
@@ -684,7 +706,7 @@ void loop()
   }
 }
 
-ISR (PCINT1_vect) // handle pin change interrupt for A0 to A5 here
+void int_timer1() // handle timer interrupt for encoder
 {
   static int encoder0PinALast = HIGH;
   static int encoder0PinBLast = HIGH;
@@ -693,7 +715,7 @@ ISR (PCINT1_vect) // handle pin change interrupt for A0 to A5 here
 
   na = digitalRead(IN_encoder0PinA);
   nb = digitalRead(IN_encoder0PinB);
-  if(encoder0PinBLast!=nb)
+  if(encoder0PinALast!=na)  // check if pin has changed
   {
     if(nb==HIGH)
     {
