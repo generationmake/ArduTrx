@@ -1,5 +1,10 @@
-/* software for arduino DRA shield
+/* software for arduino shield ArduTrx with Dorji DRA818V or DRA818U
+ * http://ardutrx.generationmake.de
  * bernhard@generationmake.de
+ * 
+ * supported HF modules:
+ *     - Dorji DRA818V (134 - 174 MHz) http://www.dorji.com/docs/data/DRA818V.pdf
+ *     - Dorji DRA818U (400 - 470 MHz) http://www.dorji.com/docs/data/DRA818U.pdf
  *
  * Version 0.1   - 16.05.2016 - initial version
  * Version 0.2   - 19.05.2016 - corrected frequency string to DRA818
@@ -27,10 +32,14 @@
  * Version 0.8   - 27.04.2018 - check communication with dra818 with handshake command
  *                            - now compatible with Arduino Leonardo
  *                            - changed encoder from pin change interrupt to timer interrupt because Arduino Leonardo doesn't support pin change interrupt on these pins
+ * Version 0.9   - 13.08.2018 - support for DRA818U
+ *                            - changed type of frequency variable to unsigned to have enough range for 70 cm frequencies
+ *                            
  *                    
  */
 
 #define MY_CALLSIGN "ArduTrx"            // callsign here will display on line 1 
+//#define DRA818U     // support for DRA818U; leave uncommented for DRA818V
 
 #include <LiquidCrystal.h>
 #include <TimerOne.h>
@@ -48,13 +57,25 @@
 // define menu
 #define MENU_LENGTH 8
 // define frequencies
-#define SCAN_LIMIT_LOWER 11520  // 144.000 MHz
-#define SCAN_LIMIT_UPPER 11680  // 146.000 MHz
-#define TUNE_LIMIT_LOWER 10720  // 134.000 MHz
-#define TUNE_LIMIT_UPPER 13920  // 174.000 MHz
-#define SPLIT_LIMIT_LOWER 11648 // 145.600 MHz
-#define SPLIT_LIMIT_UPPER 11664 // 145.800 MHz
-#define SPLIT_DIFF 48           // 0.600 MHz
+#ifdef DRA818U
+// define frequencies for DRA818U
+  #define SCAN_LIMIT_LOWER 34400  // 430.000 MHz
+  #define SCAN_LIMIT_UPPER 35200  // 440.000 MHz
+  #define TUNE_LIMIT_LOWER 32000  // 400.000 MHz
+  #define TUNE_LIMIT_UPPER 37600  // 470.000 MHz
+  #define SPLIT_LIMIT_LOWER 35084 // 438.550 MHz
+  #define SPLIT_LIMIT_UPPER 35155 // 439.4375 MHz
+  #define SPLIT_DIFF 608          // 7.600 MHz
+#else
+// define frequencies for DRA818V
+  #define SCAN_LIMIT_LOWER 11520  // 144.000 MHz
+  #define SCAN_LIMIT_UPPER 11680  // 146.000 MHz
+  #define TUNE_LIMIT_LOWER 10720  // 134.000 MHz
+  #define TUNE_LIMIT_UPPER 13920  // 174.000 MHz
+  #define SPLIT_LIMIT_LOWER 11648 // 145.600 MHz
+  #define SPLIT_LIMIT_UPPER 11664 // 145.800 MHz
+  #define SPLIT_DIFF 48           // 0.600 MHz
+#endif
 
 //compatibility for arduino leonardo
 // leonardo uses Serial1
@@ -81,7 +102,11 @@ int adc_key_in  = 0;
 struct userparameters
 {
   byte ardutrx_version;     // version identifier
-  int encoder0Pos = 11654;      // start frequency 145.675MHz
+#ifdef DRA818U
+  unsigned int encoder0Pos = 35124;      // start frequency 439.050MHz
+#else
+  unsigned int encoder0Pos = 11654;      // start frequency 145.675MHz
+#endif
   byte vol=5;                // volume level
   byte sql=5;                // squelch level
   byte power_level=0;       // power level
@@ -207,7 +232,7 @@ void set_power_level(byte level)
 byte frequency_scan(byte dir, byte scan_run)
 {
   char frxbuffer[10];  // buffer for frequency string
-  int freqa,freqb;    // fractals of frequency
+  unsigned int freqa,freqb;    // fractals of frequency
   static byte rx=0;
 
   if(scan_run==1) // while scan is running
@@ -432,6 +457,9 @@ void reset_factory_settings()
 void setup()
 {
   u.ardutrx_version=1;
+#ifdef DRA818U
+  u.ardutrx_version|=0x80;  // set bit 7 for DRA818U versions
+#endif
 // set pins
   pinMode(IN_SQ,INPUT_PULLUP); // SQ
   pinMode(OUT_PTT,OUTPUT); // PTT low=rx, high=tx
@@ -449,9 +477,9 @@ void setup()
 // init display
   lcd.begin(16, 2);  // start display library
   lcd.setCursor(0,0);
-  lcd.print("  ArduTrx - 0.8 "); // print boot message 1
+  lcd.print("  ArduTrx - 0.9 "); // print boot message 1
   lcd.setCursor(0,1);
-  lcd.print("   27.04.2018   ");  // print boot message 2
+  lcd.print("   13.08.2018   ");  // print boot message 2
   delay(2000);    // wait 2 seconds
 
 // check version number of eeprom content and reset if old
@@ -478,8 +506,8 @@ void loop()
 {
   char frxbuffer[10];  // buffer for rx frequency string
   char ftxbuffer[10];  // buffer for tx frequency string
-  int freqtx,freqrx;
-  int freqa,freqb;
+  unsigned int freqtx,freqrx;
+  unsigned int freqa,freqb;
   int updatevol=0;  // set to 1 when update of volume necessary
   int sqin;   // variable for squelch input
   static int sqin_old=0;  // variable for squelch input to store old value
