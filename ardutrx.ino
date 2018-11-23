@@ -1,8 +1,10 @@
-/* software for arduino shield ArduTrx with Dorji DRA818V or DRA818U
+/* software for arduino shield ArduTrx with Dorji or NiceRF HF modules
  * http://ardutrx.generationmake.de
  * bernhard@generationmake.de
  * 
  * supported HF modules:
+ *     - NiceRF SA818-V (134 - 174 MHz) http://www.nicerf.com/product_151_104.html
+ *     - NiceRF SA818-U (400 - 480 MHz) http://www.nicerf.com/product_151_104.html
  *     - Dorji DRA818V (134 - 174 MHz) http://www.dorji.com/docs/data/DRA818V.pdf
  *     - Dorji DRA818U (400 - 470 MHz) http://www.dorji.com/docs/data/DRA818U.pdf
  *
@@ -34,12 +36,18 @@
  *                            - changed encoder from pin change interrupt to timer interrupt because Arduino Leonardo doesn't support pin change interrupt on these pins
  * Version 0.9   - 13.08.2018 - support for DRA818U
  *                            - changed type of frequency variable to unsigned to have enough range for 70 cm frequencies
+ * Version 0.10  - 23.11.2018 - support for NiceRF SA818 HF modules
+ *                            - SA818 function: display version of module
+ *                            - SA818 function: display RSSI in menu and on main screen during receive
  *                            
  *                    
  */
 
 #define MY_CALLSIGN "ArduTrx"            // callsign here will display on line 1 
+// select your HF module
 //#define DRA818U     // support for DRA818U; leave uncommented for DRA818V
+//#define SA818V     // support for SA818-V; leave uncommented for DRA818V
+#define SA818U     // support for SA818-U; leave uncommented for DRA818V
 
 #include <LiquidCrystal.h>
 #include <TimerOne.h>
@@ -55,10 +63,14 @@
 #define IN_encoder0PinB  A4
 #define IN_encoder0PinSW A5
 // define menu
-#define MENU_LENGTH 8
+#if defined(SA818V) || defined(SA818U)
+  #define MENU_LENGTH 10
+#else
+  #define MENU_LENGTH 8
+#endif
 // define frequencies
-#ifdef DRA818U
-// define frequencies for DRA818U
+#if defined(DRA818U) || defined(SA818U)
+// define frequencies for DRA818U and SA818-U
   #define SCAN_LIMIT_LOWER 34400  // 430.000 MHz
   #define SCAN_LIMIT_UPPER 35200  // 440.000 MHz
   #define TUNE_LIMIT_LOWER 32000  // 400.000 MHz
@@ -67,7 +79,7 @@
   #define SPLIT_LIMIT_UPPER 35155 // 439.4375 MHz
   #define SPLIT_DIFF 608          // 7.600 MHz
 #else
-// define frequencies for DRA818V
+// define frequencies for DRA818V and SA818-V
   #define SCAN_LIMIT_LOWER 11520  // 144.000 MHz
   #define SCAN_LIMIT_UPPER 11680  // 146.000 MHz
   #define TUNE_LIMIT_LOWER 10720  // 134.000 MHz
@@ -102,7 +114,7 @@ int adc_key_in  = 0;
 struct userparameters
 {
   byte ardutrx_version;     // version identifier
-#ifdef DRA818U
+#if defined(DRA818U) || defined(SA818U)
   unsigned int encoder0Pos = 35124;      // start frequency 439.050MHz
 #else
   unsigned int encoder0Pos = 11654;      // start frequency 145.675MHz
@@ -221,6 +233,41 @@ void send_dra_handshake(void)
   lcd.print(rxbuffer);  // print answer to display
   delay(1000);    // wait a little bit
 }
+
+#if defined(SA818V) || defined(SA818U)
+//send version command to sa818 
+void send_dra_version(void)
+{
+  char rxbuffer[25];  // buffer for response string
+  byte rxlen=0;   // counter for received bytes
+  do
+  {
+    SerialDra.println("AT+VERSION");         // begin message
+    rxlen=SerialDra.readBytesUntil('\n',rxbuffer,24);
+  } while(rxlen==0);    // send command until answer is received
+  rxbuffer[rxlen-1]=0;  // check length of answer and remove cr character
+  rxbuffer[rxlen]=0; // remove last byte and end string
+  if(rxlen>9) lcd.print(rxbuffer+9);  // print answer to display
+  delay(1000);    // wait a little bit
+}
+
+//send RSSI command to sa818 
+void send_dra_rssi(void)
+{
+  char rxbuffer[20];  // buffer for response string
+  byte rxlen=0;   // counter for received bytes
+  serial_in_flush();
+  do
+  {
+    SerialDra.println("RSSI?");         // begin message
+    rxlen=SerialDra.readBytesUntil('\n',rxbuffer,19);
+  } while(rxlen==0);    // send command until answer is received
+  rxbuffer[rxlen-1]=0;  // check length of answer and remove cr character
+  rxbuffer[rxlen]=0; // remove last byte and end string
+  if(rxlen>6) lcd.print(rxbuffer+5);  // print answer to display
+  delay(100);    // wait a little bit
+}
+#endif
 
 // set output power level of dra818
 void set_power_level(byte level)
@@ -380,13 +427,13 @@ void display_menu(byte action)
   if(action==3) // up
   {
     menu_sub=0;   // disable submenu
-    if(menu_pointer==7) menu_in=0;    // back to main screen
+    if(menu_pointer==MENU_LENGTH-1) menu_in=0;    // back to main screen
   }
   if(action==4) // down
   {
     menu_sub=1;   // enable sub menu
     if(menu_pointer==0) serial_in_flush();  // clear serial input buffer before we start scan
-    if(menu_pointer==7) menu_in=0;    // back to main screen
+    if(menu_pointer==MENU_LENGTH-1) menu_in=0;    // back to main screen
   }
   menu_pointer%=MENU_LENGTH;
   if(menu_in==1)    // if menu is active
@@ -401,8 +448,14 @@ void display_menu(byte action)
       if(menu_pointer==3) lcd.print("Filter Highpass"); // print menu line 1
       if(menu_pointer==4) lcd.print("Filter Lowpass"); // print menu line 1
       if(menu_pointer==5) lcd.print("factory settings"); // print menu line 1
-      if(menu_pointer==6) lcd.print("DRA818 check"); // print menu line 1
+      if(menu_pointer==6) lcd.print("module check"); // print menu line 1
+#if defined(SA818V) || defined(SA818U)
+      if(menu_pointer==7) lcd.print("SA818 version"); // print menu line 1
+      if(menu_pointer==8) lcd.print("SA818 RSSI"); // print menu line 1
+      if(menu_pointer==9) lcd.print("back to main"); // print menu line 1
+#else
       if(menu_pointer==7) lcd.print("back to main"); // print menu line 1
+#endif
       if(menu_sub==1)
       {
         lcd.setCursor(0,1); // print menu line 2 if submenu is active
@@ -416,6 +469,10 @@ void display_menu(byte action)
         if(menu_pointer==4) lcd.print(strings_onoff[u.filter_lowpass]);
         if(menu_pointer==5) lcd.print("press right");
         if(menu_pointer==6) send_dra_handshake();
+#if defined(SA818V) || defined(SA818U)
+        if(menu_pointer==7) send_dra_version();
+        if(menu_pointer==8) send_dra_rssi();
+#endif
       }
     }
     else  // no key was pressed
@@ -427,6 +484,9 @@ void display_menu(byte action)
         {
           if(frequency_scan(scan_dir, scan_run)==0) scan_run=0; // stop scan if signal was found
         }
+#if defined(SA818V) || defined(SA818U)
+        if(menu_pointer==8) send_dra_rssi();  // update RSSI regularly
+#endif
       }      
     }
   }
@@ -457,7 +517,7 @@ void reset_factory_settings()
 void setup()
 {
   u.ardutrx_version=1;
-#ifdef DRA818U
+#if defined(DRA818U) || defined(SA818U)
   u.ardutrx_version|=0x80;  // set bit 7 for DRA818U versions
 #endif
 // set pins
@@ -477,9 +537,9 @@ void setup()
 // init display
   lcd.begin(16, 2);  // start display library
   lcd.setCursor(0,0);
-  lcd.print("  ArduTrx - 0.9 "); // print boot message 1
+  lcd.print(" ArduTrx - 0.10 "); // print boot message 1
   lcd.setCursor(0,1);
-  lcd.print("   13.08.2018   ");  // print boot message 2
+  lcd.print("   23.11.2018   ");  // print boot message 2
   delay(2000);    // wait 2 seconds
 
 // check version number of eeprom content and reset if old
@@ -522,12 +582,39 @@ void loop()
 
 // squelch
   sqin=digitalRead(IN_SQ);    // read squelch input
+#if defined(SA818V) || defined(SA818U)
+  if(sqin==0&&menu_in==0)   // squelch and no menu active
+  {
+    lcd.setCursor(0,0);
+    send_dra_rssi();
+  }
+#endif
   if(sqin!=sqin_old)    // compare if squelch has changed
   {
     sqin_old=sqin;      // store new value of squelch
     lcd.setCursor(15,1);    // go to last position of display
-    if(sqin) lcd.print(" ");  // print blank if no rx
-    else lcd.print("*");      // print * if rx
+    if(sqin)
+    {
+      lcd.print(" ");  // print blank if no rx
+#if defined(SA818V) || defined(SA818U)
+      if(menu_in==0)   // no menu active
+      {
+        lcd.setCursor(0,0);
+        lcd.print(MY_CALLSIGN); // print my callsign        
+      }
+#endif
+    }
+    else 
+    {
+      lcd.print("*");      // print * if rx
+#if defined(SA818V) || defined(SA818U)
+      if(menu_in==0)   // no menu active
+      {
+        lcd.setCursor(0,0);
+        lcd.print("       "); // delete my callsign        
+      }
+#endif
+    }
     display_cursor(sel);         // set cursor to menu position
   }
 
