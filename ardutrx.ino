@@ -39,7 +39,9 @@
  * Version 0.10  - 23.11.2018 - support for NiceRF SA818 HF modules
  *                            - SA818 function: display version of module
  *                            - SA818 function: display RSSI in menu and on main screen during receive
- *                            
+ * Version 0.11  - 24.11.2018 - SA818 function: configure tail tone
+ *                            - measure input voltage
+ *                            - shutdown at undervoltage
  *                    
  */
 
@@ -55,6 +57,7 @@
 // define inputs and outputs
 #define IN_SQ   2
 #define OUT_MIC 3
+#define OUT_BACKLIGHT 10
 #define OUT_PTT 11
 #define OUT_PD  12
 #define OUT_H_L 13
@@ -64,9 +67,9 @@
 #define IN_encoder0PinSW A5
 // define menu
 #if defined(SA818V) || defined(SA818U)
-  #define MENU_LENGTH 10
+  #define MENU_LENGTH 13
 #else
-  #define MENU_LENGTH 8
+  #define MENU_LENGTH 10
 #endif
 // define frequencies
 #if defined(DRA818U) || defined(SA818U)
@@ -126,6 +129,8 @@ struct userparameters
   byte filter_pre_de_emph=0;
   byte filter_highpass=0;
   byte filter_lowpass=0;
+  byte tail_tone=0;
+  unsigned int undervoltage=0;
 };
 
 struct userparameters u;
@@ -134,7 +139,8 @@ struct userparameters u;
 
 //variables for transceiver
 int update=1; // update of frequency and suelch necessary
-int update_filter=1; // update of filter settings necessary
+int update_filter=1;    // update of filter settings necessary
+int update_tail_tone=1; // update of tail tone settings necessary
 int sel=0;  // pointer for menu
 byte menu_in=0;  // in menu?
 unsigned long last_settings_update;   // variable to store when setting were changed last.
@@ -235,6 +241,12 @@ void send_dra_handshake(void)
 }
 
 #if defined(SA818V) || defined(SA818U)
+//set tail tone of sa818
+void send_dra_tail_tone(int vol)
+{
+  SerialDra.print("AT+SETTAIL=");         // begin message
+  SerialDra.println(vol);
+}
 //send version command to sa818 
 void send_dra_version(void)
 {
@@ -350,6 +362,7 @@ void display_menu(byte action)
 //strings
   const char* strings_ctcss[]={"none","67 Hz", "71.9 Hz", "74.4 Hz", "77 Hz", "79.7 Hz", "82.5 Hz", "85.4 Hz", "88.5 Hz", "91.5 Hz",  "94.8 Hz", "97.4 Hz", "100 Hz", "103.5 Hz", "107.2 Hz", "110.9 Hz", "114.8 Hz", "118.8 Hz", "123 Hz", "127.3 Hz", "131.8 Hz", "136.5 Hz", "141.3 Hz", "146.2 Hz", "151.4 Hz", "156.7 Hz", "162.2 Hz", "167.9 Hz", "173.8 Hz", "179.9 Hz", "186.2 Hz", "192.8 Hz", "203.5 Hz", "210.7 Hz", "218.1 Hz", "225.7 Hz", "233.6 Hz", "241.8 Hz", "250.3 Hz"};
   const char* strings_onoff[]={"on","off"};
+  const char* strings_offon[]={"off","on"};
 
 
   if(action==1) // right
@@ -386,6 +399,20 @@ void display_menu(byte action)
         update_filter=1;
       }
       if(menu_pointer==5) reset_factory_settings(); // factory settings
+      if(menu_pointer==8) // undervoltage
+      {
+        if(u.undervoltage<20000)
+        {
+          u.undervoltage+=100;
+        }
+      }
+#if defined(SA818V) || defined(SA818U)
+      if(menu_pointer==11) // tail tone
+      {
+        u.tail_tone=1;
+        update_tail_tone=1;
+      }
+#endif
     }
   }
   if(action==2) // left
@@ -422,6 +449,20 @@ void display_menu(byte action)
         update_filter=1;
       }
       if(menu_pointer==5) reset_factory_settings(); // factory settings
+      if(menu_pointer==8) // undervoltage
+      {
+        if(u.undervoltage>0)
+        {
+          u.undervoltage-=100;
+        }
+      }
+#if defined(SA818V) || defined(SA818U)
+      if(menu_pointer==11) // tail tone
+      {
+        u.tail_tone=0;
+        update_tail_tone=1;
+      }
+#endif
     }
   }
   if(action==3) // up
@@ -449,12 +490,15 @@ void display_menu(byte action)
       if(menu_pointer==4) lcd.print("Filter Lowpass"); // print menu line 1
       if(menu_pointer==5) lcd.print("factory settings"); // print menu line 1
       if(menu_pointer==6) lcd.print("module check"); // print menu line 1
+      if(menu_pointer==7) lcd.print("input voltage"); // print menu line 1
+      if(menu_pointer==8) lcd.print("set under voltage"); // print menu line 1
 #if defined(SA818V) || defined(SA818U)
-      if(menu_pointer==7) lcd.print("SA818 version"); // print menu line 1
-      if(menu_pointer==8) lcd.print("SA818 RSSI"); // print menu line 1
-      if(menu_pointer==9) lcd.print("back to main"); // print menu line 1
+      if(menu_pointer==9) lcd.print("SA818 version"); // print menu line 1
+      if(menu_pointer==10) lcd.print("SA818 RSSI"); // print menu line 1
+      if(menu_pointer==11) lcd.print("SA818 tail tone"); // print menu line 1
+      if(menu_pointer==12) lcd.print("back to main"); // print menu line 1
 #else
-      if(menu_pointer==7) lcd.print("back to main"); // print menu line 1
+      if(menu_pointer==9) lcd.print("back to main"); // print menu line 1
 #endif
       if(menu_sub==1)
       {
@@ -469,9 +513,12 @@ void display_menu(byte action)
         if(menu_pointer==4) lcd.print(strings_onoff[u.filter_lowpass]);
         if(menu_pointer==5) lcd.print("press right");
         if(menu_pointer==6) send_dra_handshake();
+        if(menu_pointer==7) lcd.print(analogRead(1)*29);
+        if(menu_pointer==8) lcd.print(u.undervoltage);
 #if defined(SA818V) || defined(SA818U)
-        if(menu_pointer==7) send_dra_version();
-        if(menu_pointer==8) send_dra_rssi();
+        if(menu_pointer==9) send_dra_version();
+        if(menu_pointer==10) send_dra_rssi();
+        if(menu_pointer==11) lcd.print(strings_offon[u.tail_tone]);
 #endif
       }
     }
@@ -484,8 +531,9 @@ void display_menu(byte action)
         {
           if(frequency_scan(scan_dir, scan_run)==0) scan_run=0; // stop scan if signal was found
         }
+        if(menu_pointer==7) lcd.print(analogRead(1)*29);
 #if defined(SA818V) || defined(SA818U)
-        if(menu_pointer==8) send_dra_rssi();  // update RSSI regularly
+        if(menu_pointer==10) send_dra_rssi();  // update RSSI regularly
 #endif
       }      
     }
@@ -516,15 +564,17 @@ void reset_factory_settings()
 
 void setup()
 {
-  u.ardutrx_version=1;
+  u.ardutrx_version=2;
 #if defined(DRA818U) || defined(SA818U)
   u.ardutrx_version|=0x80;  // set bit 7 for DRA818U versions
 #endif
 // set pins
   pinMode(IN_SQ,INPUT_PULLUP); // SQ
+  pinMode(OUT_BACKLIGHT,OUTPUT); // backlight low=off, high=on
   pinMode(OUT_PTT,OUTPUT); // PTT low=rx, high=tx
   pinMode(OUT_PD,OUTPUT); // PD low=sleep, high=normal
   pinMode(OUT_H_L,OUTPUT); // H_L low=1 W, high=0.5 W
+  digitalWrite(OUT_BACKLIGHT,HIGH); // backlight on
   digitalWrite(OUT_PTT,LOW); // rx
   digitalWrite(OUT_PD,LOW); // normal
   digitalWrite(OUT_H_L,HIGH); // 0.5 W
@@ -537,9 +587,9 @@ void setup()
 // init display
   lcd.begin(16, 2);  // start display library
   lcd.setCursor(0,0);
-  lcd.print(" ArduTrx - 0.10 "); // print boot message 1
+  lcd.print(" ArduTrx - 0.11 "); // print boot message 1
   lcd.setCursor(0,1);
-  lcd.print("   23.11.2018   ");  // print boot message 2
+  lcd.print("   24.11.2018   ");  // print boot message 2
   delay(2000);    // wait 2 seconds
 
 // check version number of eeprom content and reset if old
@@ -578,6 +628,21 @@ void loop()
   if(millis()>(last_settings_update+5000))  // 5 sencons past with no user action
   {
     EEPROM.put(0,u);  // save all user parameters to EEprom  - checks if data in eeprom is the same, so no risc to destroy eeprom
+  }
+
+// check undervoltage
+  if(u.undervoltage>0)
+  {
+    if((analogRead(1)*29)<u.undervoltage)
+    {
+      digitalWrite(OUT_BACKLIGHT,LOW); // backlight off
+      digitalWrite(OUT_PD,HIGH); // power down
+    }
+    else
+    {
+      digitalWrite(OUT_BACKLIGHT,HIGH); // backlight on
+      digitalWrite(OUT_PD,LOW); // normal
+    }
   }
 
 // squelch
@@ -818,6 +883,12 @@ void loop()
     update_filter=0;
     last_settings_update=millis();  // trigger update
     send_drafilter(u.filter_pre_de_emph,u.filter_highpass, u.filter_lowpass);  // update filter settings on dra818
+  }
+  if(update_tail_tone==1)    // update tail tone
+  {
+    update_tail_tone=0;
+    last_settings_update=millis();  // trigger update
+    send_dra_tail_tone(u.tail_tone);  // update tail tone settings on SA818
   }
 }
 
